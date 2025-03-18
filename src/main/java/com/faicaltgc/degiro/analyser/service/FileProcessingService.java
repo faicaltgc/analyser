@@ -1,5 +1,7 @@
 package com.faicaltgc.degiro.analyser.service;
 import com.faicaltgc.degiro.analyser.dto.TestResponse;
+import com.faicaltgc.degiro.analyser.model.DelistedPositions;
+import com.faicaltgc.degiro.analyser.repository.DelistedPositionsRepository;
 import com.faicaltgc.degiro.analyser.repository.PositionRepository;
 import com.faicaltgc.degiro.analyser.model.Position;
 import com.opencsv.CSVReader;
@@ -11,7 +13,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.time.LocalDate;
@@ -25,6 +28,8 @@ import java.util.*;
 public class FileProcessingService {
     @Autowired
     private PositionRepository positionRepository;
+    @Autowired
+    private DelistedPositionsRepository delistedPositionsRepository;
     @Autowired
     private CacheManager cacheManager;
     private boolean isUpdatedList = false;
@@ -76,19 +81,38 @@ public class FileProcessingService {
 
     public void sendPositionToPython(List<Position> positions){
         try {
+            List<DelistedPositions> delistedPositions = delistedPositionsRepository.findAll();
+            List<Position> filteredPositions = filterDelistedPositions(positions, delistedPositions);
             RestTemplate restTemplate = new RestTemplate();
-            ResponseEntity<TestResponse> response = restTemplate.postForEntity("http://localhost:5000/python/data", Map.of("positions", positions), TestResponse.class);
-            if(response.getBody() != null){
+           ResponseEntity<TestResponse> response = restTemplate.postForEntity("http://localhost:5000/python/data", Map.of("positions", filteredPositions), TestResponse.class);
+           if(response.getBody() != null){
                 List<Position> updatedPositions = response.getBody().getUpdatedPositions();
+                List<DelistedPositions> delistedISINs = response.getBody().getDelistedISINs();
                 if (updatedPositions!=null){
                     updatePositionPrices(updatedPositions);
                 }
+                if (delistedISINs!= null){
+                    delistedPositions.addAll(delistedISINs);
+                    delistedPositionsRepository.saveAll(delistedPositions);
+                }
+
             }
 
             System.out.println("Python Status Code: "+response.getStatusCode());
         } catch (Exception e) {
             System.err.println("Error while communicating with Python Service: "+e.getMessage());
         }
+    }
+    private List<Position> filterDelistedPositions(List<Position> positions, List<DelistedPositions> delistedPositions) {
+        List<Position> filteredPositions = new ArrayList<>();
+        for (Position position : positions) {
+            for (DelistedPositions delistedPosition : delistedPositions) {
+                if (!position.getIsin().equals(delistedPosition.getIsin())) {
+                    filteredPositions.add(position);
+                }
+            }
+        }
+        return filteredPositions;
     }
 
 
