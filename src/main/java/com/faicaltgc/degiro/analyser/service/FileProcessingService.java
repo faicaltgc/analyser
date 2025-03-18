@@ -1,10 +1,13 @@
 package com.faicaltgc.degiro.analyser.service;
+
 import com.faicaltgc.degiro.analyser.dto.TestResponse;
 import com.faicaltgc.degiro.analyser.model.DelistedPositions;
+import com.faicaltgc.degiro.analyser.model.Position;
 import com.faicaltgc.degiro.analyser.repository.DelistedPositionsRepository;
 import com.faicaltgc.degiro.analyser.repository.PositionRepository;
-import com.faicaltgc.degiro.analyser.model.Position;
 import com.opencsv.CSVReader;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
@@ -13,149 +16,124 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.*;
-
 
 @Service
 public class FileProcessingService {
+    private static final Logger logger = LoggerFactory.getLogger(FileProcessingService.class);
+
     @Autowired
     private PositionRepository positionRepository;
+
     @Autowired
     private DelistedPositionsRepository delistedPositionsRepository;
+
     @Autowired
     private CacheManager cacheManager;
-    private boolean isUpdatedList = false;
+
 
     @Cacheable("positions")
     public List<Position> getPositions() {
-        System.out.println("Hole Positionen aus der Datenbank (Cache nicht vorhanden oder abgelaufen)");
-        List<Position> positions =  positionRepository.findAll();
-        if (positions!=null && !positions.isEmpty()){
-            if (isPositionDataOutdated(positions)) {
-                sendPositionToPython(filterPositionsByIsin(positions));
-            }
+        logger.info("Hole Positionen aus der Datenbank (Cache nicht vorhanden oder abgelaufen)");
+        List<Position> positions = positionRepository.findAll();
+        if (!positions.isEmpty() && isPositionDataOutdated(positions)) {
+            sendPositionToPython(filterPositionsByIsin(positions));
         }
         return positions;
     }
-    public boolean isPositionDataOutdated(List<Position> positions){
-        LocalDate today = LocalDate.now();
-        for (Position position : positions) {
-            if (position.getCloseDate() == null || position.getCloseDate().isBefore(today.minusDays(2))){
-                return true;
-            }
-        }
-        return false;
-    }
 
+    private boolean isPositionDataOutdated(List<Position> positions) {
+        LocalDate today = LocalDate.now();
+        return positions.stream().anyMatch(position -> position.getCloseDate() == null || position.getCloseDate().isBefore(today.minusDays(2)));
+    }
 
     public List<Position> processCsvFile(MultipartFile file) {
         List<Position> positionList = new ArrayList<>();
         Set<Position> cachedPositions = new HashSet<>(getPositions());
+
         try (Reader reader = new InputStreamReader(file.getInputStream());
              CSVReader csvReader = new CSVReader(reader)) {
             csvReader.skip(1); // Überspringt die Header-Zeile
             String[] nextRecord;
             while ((nextRecord = csvReader.readNext()) != null) {
                 Position position = createPositionFromCsvRecord(nextRecord);
-                if (!cachedPositions.contains(position)) { // Vergleich mit dem Cache
+                if (!cachedPositions.contains(position)) {
                     positionList.add(position);
                 }
             }
         } catch (Exception e) {
-            System.err.println(e.getMessage());
-            e.printStackTrace();
+            logger.error("Fehler beim Verarbeiten der CSV-Datei: {}", e.getMessage(), e);
         }
-        updatePositionCache(positionList); // Cache aktualisieren
-        sendPositionToPython(getPositions()); // hier wird der Python Service nach der Speicherung aufgerufen
+
+        updatePositionCache(positionList);
+        sendPositionToPython(getPositions());
         return getPositions();
     }
 
-
-    public void sendPositionToPython(List<Position> positions){
+    private void sendPositionToPython(List<Position> positions) {
         try {
             List<DelistedPositions> delistedPositions = delistedPositionsRepository.findAll();
             List<Position> filteredPositions = filterDelistedPositions(positions, delistedPositions);
             RestTemplate restTemplate = new RestTemplate();
-           ResponseEntity<TestResponse> response = restTemplate.postForEntity("http://localhost:5000/python/data", Map.of("positions", filteredPositions), TestResponse.class);
-           if(response.getBody() != null){
+            ResponseEntity<TestResponse> response = restTemplate.postForEntity("http://localhost:5000/python/data", Map.of("positions", filteredPositions), TestResponse.class);
+            if (response.getBody() != null) {
                 List<Position> updatedPositions = response.getBody().getUpdatedPositions();
                 List<DelistedPositions> delistedISINs = response.getBody().getDelistedISINs();
-                if (updatedPositions!=null){
+                if (updatedPositions != null) {
                     updatePositionPrices(updatedPositions);
                 }
-                if (delistedISINs!= null){
+                if (delistedISINs != null) {
                     delistedPositions.addAll(delistedISINs);
                     delistedPositionsRepository.saveAll(delistedPositions);
                 }
-
             }
-
-            System.out.println("Python Status Code: "+response.getStatusCode());
+            logger.info("Python Status Code: {}", response.getStatusCode());
         } catch (Exception e) {
-            System.err.println("Error while communicating with Python Service: "+e.getMessage());
+            logger.error("Fehler bei der Kommunikation mit dem Python-Service: {}", e.getMessage(), e);
         }
     }
+
     private List<Position> filterDelistedPositions(List<Position> positions, List<DelistedPositions> delistedPositions) {
         List<Position> filteredPositions = new ArrayList<>();
         for (Position position : positions) {
-            for (DelistedPositions delistedPosition : delistedPositions) {
-                if (!position.getIsin().equals(delistedPosition.getIsin())) {
-                    filteredPositions.add(position);
-                }
+            boolean isDelisted = delistedPositions.stream().anyMatch(delisted -> delisted.getIsin().equals(position.getIsin()));
+            if (!isDelisted) {
+                filteredPositions.add(position);
             }
         }
         return filteredPositions;
     }
 
-
-    public void updatePositionPrices(List<Position> updatedPositions) {
-        for (Position updatedPosition: updatedPositions){
-            Optional<Position> positionOptional =  positionRepository.findByIsin(updatedPosition.getIsin());
-            if (positionOptional.isPresent()){
-                Position positionToUpdate = positionOptional.get();
-                if (updatedPosition.getClose()>0) {
-                    positionToUpdate.setClose(updatedPosition.getClose());
-                    positionToUpdate.setCloseDate(LocalDate.now());
-                }
-                positionRepository.save(positionToUpdate);
-            } else {
-                positionOptional = positionRepository.findByProduct(updatedPosition.getProduct());
-                if (positionOptional.isPresent()){
-                    Position positionToUpdate = positionOptional.get();
-                    if (updatedPosition.getClose()>0){
-                        positionToUpdate.setClose(updatedPosition.getClose());
-                        positionToUpdate.setCloseDate(LocalDate.now());
-                    }
-                    positionRepository.save(positionToUpdate);
-                }
-            }
+    private void updatePositionPrices(List<Position> updatedPositions) {
+        for (Position updatedPosition : updatedPositions) {
+            Optional<Position> positionOptional = positionRepository.findByIsin(updatedPosition.getIsin());
+            positionOptional.ifPresentOrElse(position -> updatePositionIfNecessary(position, updatedPosition),
+                    () -> positionRepository.findByProduct(updatedPosition.getProduct())
+                            .ifPresent(position -> updatePositionIfNecessary(position, updatedPosition)));
         }
-
     }
 
+    private void updatePositionIfNecessary(Position positionToUpdate, Position updatedPosition) {
+        if (updatedPosition.getClose() > 0) {
+            positionToUpdate.setClose(updatedPosition.getClose());
+            positionToUpdate.setCloseDate(LocalDate.now());
+            positionRepository.save(positionToUpdate);
+        }
+    }
 
     private void updatePositionCache(List<Position> newPositions) {
         if (!newPositions.isEmpty()) {
             positionRepository.insert(newPositions);
             Cache positionsCache = cacheManager.getCache("positions");
             if (positionsCache != null) {
-                Cache.ValueWrapper valueWrapper = positionsCache.get("positions");
-                if (valueWrapper != null) {
-                    List<Position> currentPositions = (List<Position>) valueWrapper.get();
-                    if (currentPositions != null) {
-                        currentPositions.addAll(newPositions);
-                        positionsCache.put("positions", currentPositions);
-                    } else {
-                        positionsCache.put("positions", newPositions);
-                    }
+                List<Position> currentPositions = positionsCache.get("positions", List.class);
+                if (currentPositions != null) {
+                    currentPositions.addAll(newPositions);
+                    positionsCache.put("positions", currentPositions);
                 } else {
                     positionsCache.put("positions", newPositions);
                 }
@@ -163,19 +141,8 @@ public class FileProcessingService {
         }
     }
 
-
     private Position createPositionFromCsvRecord(String[] nextRecord) {
         Position position = new Position();
-
-       // Annahme: Die Reihenfolge der Spalten im CSV ist fix
-        // und entspricht: Produkt, Symbol/ISIN, Anzahl, Schlußkurs, Wert
-        // Anpassen, falls die Reihenfolge abweicht
-        //nextRecord.length > 0): Bevor auf nextRecord[0] zugegriffen wird, wird geprüft,
-        // ob das Array überhaupt mindestens ein Element enthält.
-        //(nextRecord.length > 1): Bevor auf nextRecord[1] zugegriffen wird, wird geprüft,
-        // ob das Array mindestens zwei Elemente enthält.
-        //Und so weiter.
-
         if (nextRecord.length > 0) {
             position.setProduct(nextRecord[0].trim());
         }
@@ -189,28 +156,22 @@ public class FileProcessingService {
             position.setClose(Float.parseFloat(nextRecord[3].trim().replace(",", ".")));
         }
         if (nextRecord.length > 4) {
-            // Ersetze Komma durch Punkt für die Umwandlung zu Float
-            String wertMitPunkt = nextRecord[4].trim().replace(",", ".");
-            // Entferne ggf. Währungssymbole und Tausenderpunkte
-            wertMitPunkt = wertMitPunkt.replaceAll("[^\\d.]", "");
+            String wertMitPunkt = nextRecord[4].trim().replace(",", ".").replaceAll("[^\\d.]", "");
             if (!wertMitPunkt.isEmpty()) {
                 position.setSum(Float.parseFloat(wertMitPunkt));
             }
         }
-
         position.setCloseDate(LocalDate.now());
-
         return position;
     }
 
-    private List<Position> filterPositionsByIsin(List<Position> positions){
-        List<Position> filteredPosition=new ArrayList<>(); ;
-        for(Position position: positions){
-            if(position.getIsin()!=null&&!position.getIsin().trim().isEmpty()){
-                filteredPosition.add(position);
+    private List<Position> filterPositionsByIsin(List<Position> positions) {
+        List<Position> filteredPositions = new ArrayList<>();
+        for (Position position : positions) {
+            if (position.getIsin() != null && !position.getIsin().trim().isEmpty()) {
+                filteredPositions.add(position);
             }
         }
-        return filteredPosition;
+        return filteredPositions;
     }
-
 }
