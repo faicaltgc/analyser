@@ -13,10 +13,14 @@ import org.springframework.data.mongodb.core.mapping.Document;
 @NoArgsConstructor
 @EqualsAndHashCode(of = {"isin"}) // Definiert die Felder für den Vergleich
 @Data
-public class DelistedPositions {
+public class DelistedPosition {
     @Id
     private String id;
     @Indexed(unique = true)
     private String isin;
+
+    public DelistedPosition(String isin) {
+        this.isin = isin;
+    } // Constructor for creating a new DelistedPositions object with only the ISIN
 
 }

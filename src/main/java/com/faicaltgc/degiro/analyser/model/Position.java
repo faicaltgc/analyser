@@ -10,7 +10,7 @@ import java.time.LocalDate;
 @Document(collection = "positions")
 @AllArgsConstructor
 @NoArgsConstructor
-@EqualsAndHashCode(of = {"isin","closeDate"}) // Definiert die Felder für den Vergleich
+@EqualsAndHashCode(of = {"isin", "close", "closeDate"}) // Definiert die Felder für den Vergleich
 @Data
 public class Position {
     @Id
@@ -27,6 +27,8 @@ public class Position {
     private float buy;
     private float result;
     private LocalDate closeDate;
+    private float sumInEuro;
+    private String currency;
 
 
     @Override

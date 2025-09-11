@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
                 System.out.println("Data received : "+testResponse.getMessage()+" "+testResponse.getUpdatedPositions());
                 return ResponseEntity.ok(testResponse);
             } catch (Exception e) {
-                return ResponseEntity.internalServerError().body(new TestResponse(e.getMessage(),null,null));
+                return ResponseEntity.internalServerError().body(new TestResponse(e.getMessage(), null, null, 0));
             }
         }
     }
