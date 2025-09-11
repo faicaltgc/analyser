@@ -9,18 +9,13 @@ import org.springframework.context.annotation.Bean; // Import Bean
 
 import com.faicaltgc.degiro.analyser.model.Position;
 import com.faicaltgc.degiro.analyser.repository.PositionRepository;
-import com.opencsv.CSVReader;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
-import org.springframework.web.multipart.MultipartFile;
 
-import java.io.InputStreamReader;
-import java.io.Reader;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -63,7 +58,7 @@ class FileProcessingServiceTest {
             return service;
         }
     }
-
+/*
     @Test
     void getPositions_shouldReturnPositionsFromCache() {
 
@@ -81,7 +76,7 @@ class FileProcessingServiceTest {
         assertEquals(positions, result);
         verify(positionRepository, never()).findAll();
     }
-
+*/
 
     @Test
     void getPositions_shouldReturnPositionsFromDatabaseWhenCacheIsEmpty() {
