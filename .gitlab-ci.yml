@@ -22,7 +22,7 @@ dockerize:
   services:
     - docker:dind
   script:
-    - docker build -t $CI_REGISTRY_IMAGE:latest .
+    - docker build --build-arg MONGO_DATABASE=$MONGO_DATABASE --build-arg MONGO_USER=$MONGO_USER --build-arg MONGO_PASSWORD=$MONGO_PASSWORD --build-arg MONGO_CLUSTER=$MONGO_CLUSTER --build-arg SECRET_KEY=$SECRET_KEY -t $CI_REGISTRY_IMAGE:latest .
     - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
     - docker push $CI_REGISTRY_IMAGE:latest
   only:
