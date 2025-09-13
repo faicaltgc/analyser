@@ -1,0 +1,29 @@
+version: '3.8'
+services:
+  backend:
+    image: registry.gitlab.com/faicaltgc/analyser:latest
+    container_name: springboot-backend
+    ports:
+      - "8080:8080"
+    environment:
+      - MONGO_DATABASE=$MONGO_DATABASE
+      - MONGO_USER=$MONGO_USER
+      - MONGO_PASSWORD=$MONGO_PASSWORD
+      - MONGO_CLUSTER=$MONGO_CLUSTER
+      - SECRET_KEY=$SECRET_KEY
+    networks:
+      - app-network
+  frontend:
+    image: registry.gitlab.com/faicaltgc/portfolio-analyser-react:latest
+    container_name: react-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://backend:8080
+    depends_on:
+      - backend
+    networks:
+      - app-network
+networks:
+  app-network:
+    driver: bridge
